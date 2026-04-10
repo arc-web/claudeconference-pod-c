@@ -1,7 +1,7 @@
 <div align="center">
 
 ![](https://img.shields.io/badge/StellarPH_x_KMC-Claude_AI_Workshop-7B2FBE?style=for-the-badge)
-![](https://img.shields.io/badge/Pod_C-6_Members-F5A623?style=for-the-badge)
+![](https://img.shields.io/badge/Pod_C-3_Members-F5A623?style=for-the-badge)
 
 # Pod C
 
@@ -13,16 +13,13 @@
 
 ## Who Is In My Pod?
 
-| | Name | Role | Computer |
-|---|------|------|----------|
-| 👑  **Pierce Borinaga** | Pod Leader | Mac |
-|     **Lysander Uy** | Member | Windows |
-|     **Divino Franco R. Aurellanl** | Member | Windows |
-|     **Precious Grace D. Manucom** | Member | Windows |
-|     **Arnold Nico G. Ome** | Member | Windows |
-|     **Christian C. Barral** | Member | Windows |
+| | Name | Role | Level | Computer |
+|---|------|------|-------|----------|
+| 👑  **Rome Nicolas** | Pod Leader | Subscription | Mac |
+|     **Ivhan** | Member | Subscription | - |
+|     **Guadalupe Carriaga** | Member | Experienced | Windows |
 
-**Pierce Borinaga** is your pod leader - they keep things moving, call votes when the group is stuck, and make sure everyone has something to do. The leader can hand the role to someone else if they want to.
+**Rome Nicolas** is your pod leader - they keep things moving, call votes when the group is stuck, and make sure everyone has something to do.
 
 ---
 
