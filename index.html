@@ -495,6 +495,47 @@
     }
     #theme-toggle:hover { border-color: var(--accent); color: var(--accent); }
 
+    /* ─── END CONFIRMATION MODAL ─── */
+    #end-modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.75);
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+    #end-modal-overlay.show { display: flex; }
+    #end-modal {
+      background: var(--surface);
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius);
+      padding: 32px 24px 24px;
+      width: 100%;
+      max-width: 340px;
+      text-align: center;
+      animation: pop-in 0.25s cubic-bezier(0.34,1.56,0.64,1) both;
+    }
+    #end-modal-emoji {
+      font-size: 52px;
+      margin-bottom: 12px;
+      display: block;
+    }
+    #end-modal-msg {
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--text);
+      margin-bottom: 24px;
+      line-height: 1.3;
+    }
+    #end-modal .modal-buttons {
+      display: flex;
+      gap: 10px;
+    }
+
     /* Scrollbar */
     ::-webkit-scrollbar { width: 0; }
   </style>
@@ -682,6 +723,18 @@
 
 </div>
 
+<!-- ══════════════ END CONFIRMATION MODAL ══════════════ -->
+<div id="end-modal-overlay">
+  <div id="end-modal">
+    <span id="end-modal-emoji">😅</span>
+    <p id="end-modal-msg">Do you really want to end the activity?</p>
+    <div class="modal-buttons">
+      <button class="btn btn-outline" id="end-modal-no">Keep Going 💪</button>
+      <button class="btn btn-danger" id="end-modal-yes">End It</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast"></div>
 
 <script>
@@ -800,23 +853,25 @@ const Audio = {
     }
   },
 
-  _beep(freq1 = 880, freq2 = 660, duration = 0.18) {
+  // Siren: sweeps 880Hz→2600Hz→880Hz over ~0.9s, square wave, loud
+  _siren() {
     if (!this.ctx || !this.masterGain) return;
     try {
       const t = this.ctx.currentTime;
-      [freq1, freq2].forEach((freq, i) => {
-        const osc = this.ctx.createOscillator();
-        const gain = this.ctx.createGain();
-        osc.type = 'sine';
-        osc.frequency.value = freq;
-        gain.gain.setValueAtTime(0, t + i * 0.08);
-        gain.gain.linearRampToValueAtTime(0.5, t + i * 0.08 + 0.02);
-        gain.gain.exponentialRampToValueAtTime(0.001, t + i * 0.08 + duration);
-        osc.connect(gain);
-        gain.connect(this.masterGain);
-        osc.start(t + i * 0.08);
-        osc.stop(t + i * 0.08 + duration + 0.05);
-      });
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(880, t);
+      osc.frequency.linearRampToValueAtTime(2600, t + 0.45);
+      osc.frequency.linearRampToValueAtTime(880, t + 0.9);
+      gain.gain.setValueAtTime(0, t);
+      gain.gain.linearRampToValueAtTime(0.4, t + 0.02);
+      gain.gain.setValueAtTime(0.4, t + 0.88);
+      gain.gain.linearRampToValueAtTime(0, t + 0.9);
+      osc.connect(gain);
+      gain.connect(this.masterGain);
+      osc.start(t);
+      osc.stop(t + 0.95);
     } catch(_) {}
   },
 
@@ -824,10 +879,10 @@ const Audio = {
     if (this.isRunning) return;
     this.isRunning = true;
     this.resume();
-    this._beep();
+    this._siren();
     this.beepInterval = setInterval(() => {
-      if (this.isRunning && !this.isMuted) this._beep();
-    }, 1200);
+      if (this.isRunning && !this.isMuted) this._siren();
+    }, 950);
   },
 
   isMuted: false,
@@ -1406,9 +1461,62 @@ document.getElementById('btn-pause-sound-active').addEventListener('click', asyn
   }
 });
 
-// Active screen — Mark Complete
+// ────────────────────────────────────────────────
+// 3-STEP END CONFIRMATION
+// ────────────────────────────────────────────────
+const EndConfirm = {
+  step: 0,
+  steps: [
+    { emoji: '😅', msg: 'Do you really want to end the activity?', yes: 'End It',       no: 'Keep Going 💪' },
+    { emoji: '😤', msg: 'Really?',                                  yes: 'Yes, End It',  no: 'No, Keep Going!' },
+    { emoji: '🥺', msg: 'Weally :(',                                yes: 'Fine... End',  no: 'OK OK I\'ll Finish!' },
+  ],
+
+  open() {
+    this.step = 0;
+    this._render();
+    document.getElementById('end-modal-overlay').classList.add('show');
+  },
+
+  _render() {
+    const s = this.steps[this.step];
+    document.getElementById('end-modal-emoji').textContent = s.emoji;
+    document.getElementById('end-modal-msg').textContent   = s.msg;
+    document.getElementById('end-modal-yes').textContent   = s.yes;
+    document.getElementById('end-modal-no').textContent    = s.no;
+    // Re-trigger animation
+    const modal = document.getElementById('end-modal');
+    modal.style.animation = 'none';
+    modal.offsetHeight; // reflow
+    modal.style.animation = '';
+  },
+
+  confirm() {
+    this.step++;
+    if (this.step >= this.steps.length) {
+      this.close();
+      completeActivity();
+    } else {
+      this._render();
+    }
+  },
+
+  cancel() {
+    this.close();
+    showToast('That\'s the spirit! Keep going! 🔥');
+  },
+
+  close() {
+    document.getElementById('end-modal-overlay').classList.remove('show');
+  },
+};
+
+document.getElementById('end-modal-yes').addEventListener('click', () => EndConfirm.confirm());
+document.getElementById('end-modal-no').addEventListener('click',  () => EndConfirm.cancel());
+
+// Active screen — Mark Complete (manual end → triggers confirmation)
 document.getElementById('btn-complete').addEventListener('click', () => {
-  completeActivity();
+  EndConfirm.open();
 });
 
 // Complete screen — New Alarm
