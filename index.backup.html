@@ -1,0 +1,2016 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="theme-color" content="#0a0a0f" />
+  <title>FitAlarm</title>
+  <!-- Pose detection — loaded lazily when camera activities are selected -->
+  <script id="tf-script" data-src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core@4.2.0/dist/tf-core.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0a0a0f;
+      --surface: #13131a;
+      --border: #2a2a3a;
+      --accent: #00ff88;
+      --accent-dim: #00cc6a;
+      --danger: #ff3b5c;
+      --danger-dim: #cc2d48;
+      --warn: #ffaa00;
+      --text: #e8e8f0;
+      --text-muted: #7a7a9a;
+      --radius: 16px;
+      --radius-sm: 10px;
+    }
+
+    html.light {
+      --bg: #f4f4f8;
+      --surface: #ffffff;
+      --border: #dcdce8;
+      --accent: #00a85a;
+      --accent-dim: #008f4c;
+      --danger: #e02040;
+      --danger-dim: #b81a34;
+      --warn: #d48000;
+      --text: #0f0f1a;
+      --text-muted: #6b6b88;
+    }
+
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      -webkit-font-smoothing: antialiased;
+      overflow: hidden;
+    }
+
+    #app {
+      position: relative;
+      width: 100%;
+      height: 100dvh;
+    }
+
+    .screen {
+      display: none;
+      position: absolute;
+      inset: 0;
+      padding: env(safe-area-inset-top, 20px) 24px env(safe-area-inset-bottom, 20px);
+      overflow-y: auto;
+      flex-direction: column;
+    }
+    .screen.active { display: flex; }
+
+    /* ─── SHARED COMPONENTS ─── */
+    .screen-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 16px 0 8px;
+    }
+    .screen-title {
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+    }
+    .logo-icon { font-size: 26px; }
+
+    .btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      width: 100%;
+      padding: 18px 24px;
+      border-radius: var(--radius);
+      border: none;
+      font-size: 17px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.1s, opacity 0.1s;
+      -webkit-tap-highlight-color: transparent;
+      min-height: 58px;
+    }
+    .btn:active { transform: scale(0.97); opacity: 0.85; }
+    .btn-primary { background: var(--accent); color: #000; }
+    .btn-danger  { background: var(--danger); color: #fff; }
+    .btn-warn    { background: var(--warn); color: #000; }
+    .btn-outline {
+      background: transparent;
+      border: 2px solid var(--border);
+      color: var(--text);
+    }
+    .btn-ghost {
+      background: var(--surface);
+      color: var(--text);
+    }
+    .btn-sm {
+      font-size: 15px;
+      padding: 14px 20px;
+      min-height: 48px;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+    }
+
+    label {
+      display: block;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      margin-bottom: 8px;
+    }
+
+    input[type="number"], input[type="time"] {
+      width: 100%;
+      background: var(--bg);
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--text);
+      font-size: 20px;
+      font-weight: 600;
+      padding: 14px 16px;
+      outline: none;
+      transition: border-color 0.2s;
+      -webkit-appearance: none;
+      appearance: none;
+    }
+    input[type="number"]:focus,
+    input[type="time"]:focus { border-color: var(--accent); }
+    input[type="time"]::-webkit-calendar-picker-indicator { filter: invert(1); opacity: 0.4; }
+
+    .spacer { flex: 1; }
+    .gap-12 { display: flex; flex-direction: column; gap: 12px; }
+    .gap-16 { display: flex; flex-direction: column; gap: 16px; }
+    .gap-20 { display: flex; flex-direction: column; gap: 20px; }
+
+    /* ─── SETUP SCREEN ─── */
+    #screen-setup .activity-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    .activity-btn {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 16px 8px;
+      background: var(--bg);
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text-muted);
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: border-color 0.2s, color 0.2s, background 0.2s;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .activity-btn .icon { font-size: 28px; }
+    .activity-btn.selected {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: rgba(0, 255, 136, 0.06);
+    }
+
+    /* ─── STANDBY SCREEN ─── */
+    #screen-standby {
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      gap: 0;
+    }
+    #screen-standby .alarm-label {
+      font-size: 14px;
+      color: var(--text-muted);
+      font-weight: 600;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      margin-bottom: 12px;
+    }
+    #screen-standby .alarm-time-big {
+      font-size: 64px;
+      font-weight: 800;
+      letter-spacing: -3px;
+      color: var(--text);
+      margin-bottom: 4px;
+    }
+    #screen-standby .activity-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 99px;
+      padding: 6px 16px;
+      font-size: 14px;
+      color: var(--text-muted);
+      margin-bottom: 48px;
+    }
+    .countdown-label {
+      font-size: 13px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      margin-bottom: 8px;
+    }
+    #countdown-display {
+      font-size: 44px;
+      font-weight: 700;
+      color: var(--accent);
+      letter-spacing: -2px;
+      font-variant-numeric: tabular-nums;
+    }
+    #screen-standby .edit-btn {
+      margin-top: 48px;
+      width: auto;
+      padding: 12px 28px;
+      font-size: 14px;
+    }
+
+    /* ─── ALARMING SCREEN ─── */
+    #screen-alarming {
+      background: var(--bg);
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      gap: 0;
+    }
+    .alarm-pulse-ring {
+      position: relative;
+      width: 200px;
+      height: 200px;
+      margin: 0 auto 32px;
+    }
+    .alarm-pulse-ring::before,
+    .alarm-pulse-ring::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      border-radius: 50%;
+      background: rgba(255, 59, 92, 0.15);
+      animation: pulse-ring 1.4s ease-out infinite;
+    }
+    .alarm-pulse-ring::after { animation-delay: 0.7s; }
+    .alarm-pulse-center {
+      position: absolute;
+      inset: 20px;
+      border-radius: 50%;
+      background: var(--danger);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 56px;
+      animation: pulse-center 1.4s ease-in-out infinite;
+    }
+    @keyframes pulse-ring {
+      0%   { transform: scale(0.8); opacity: 0.8; }
+      100% { transform: scale(1.4); opacity: 0; }
+    }
+    @keyframes pulse-center {
+      0%, 100% { transform: scale(1); }
+      50%       { transform: scale(1.05); }
+    }
+    .alarm-title {
+      font-size: 28px;
+      font-weight: 800;
+      margin-bottom: 8px;
+    }
+    .alarm-subtitle {
+      font-size: 16px;
+      color: var(--text-muted);
+      margin-bottom: 40px;
+    }
+    #screen-alarming .actions {
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    /* ─── ACTIVE SCREEN ─── */
+    #screen-active {
+      align-items: center;
+      gap: 0;
+    }
+    #screen-active .screen-header { width: 100%; }
+    .progress-ring-wrap {
+      position: relative;
+      width: 220px;
+      height: 220px;
+      margin: 24px auto 16px;
+    }
+    .progress-ring-wrap svg {
+      transform: rotate(-90deg);
+    }
+    .progress-ring-bg { fill: none; stroke: var(--border); stroke-width: 10; }
+    .progress-ring-fill {
+      fill: none;
+      stroke: var(--accent);
+      stroke-width: 10;
+      stroke-linecap: round;
+      transition: stroke-dashoffset 1s linear;
+    }
+    .progress-center-text {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+    .progress-value {
+      font-size: 40px;
+      font-weight: 800;
+      letter-spacing: -2px;
+      color: var(--text);
+    }
+    .progress-unit {
+      font-size: 14px;
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+    .progress-target {
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-bottom: 24px;
+    }
+    .stats-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      width: 100%;
+      margin-bottom: 20px;
+    }
+    .stat-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 14px;
+      text-align: center;
+    }
+    .stat-value {
+      font-size: 22px;
+      font-weight: 700;
+      color: var(--text);
+      font-variant-numeric: tabular-nums;
+    }
+    .stat-label {
+      font-size: 12px;
+      color: var(--text-muted);
+      font-weight: 600;
+      margin-top: 2px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    #screen-active .bottom-actions {
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-top: auto;
+    }
+    .sound-indicator {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(255, 59, 92, 0.1);
+      border: 1px solid rgba(255, 59, 92, 0.3);
+      border-radius: 99px;
+      padding: 8px 16px;
+      font-size: 13px;
+      color: var(--danger);
+      font-weight: 600;
+    }
+    .sound-indicator.paused {
+      background: rgba(255, 170, 0, 0.1);
+      border-color: rgba(255, 170, 0, 0.3);
+      color: var(--warn);
+    }
+    .sound-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+      animation: blink 1s infinite;
+    }
+    .sound-indicator.paused .sound-dot { animation: none; }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
+
+    /* ─── COMPLETE SCREEN ─── */
+    #screen-complete {
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      gap: 0;
+      overflow: hidden;
+    }
+    .confetti-wrap {
+      font-size: 72px;
+      margin-bottom: 16px;
+      animation: pop-in 0.4s cubic-bezier(0.34,1.56,0.64,1) both;
+    }
+    @keyframes pop-in {
+      from { transform: scale(0); opacity: 0; }
+      to   { transform: scale(1); opacity: 1; }
+    }
+    .complete-title {
+      font-size: 32px;
+      font-weight: 800;
+      margin-bottom: 8px;
+    }
+    .complete-sub {
+      font-size: 16px;
+      color: var(--text-muted);
+      margin-bottom: 32px;
+    }
+    .complete-stats {
+      display: flex;
+      gap: 24px;
+      margin-bottom: 40px;
+    }
+    .complete-stat {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .complete-stat-value {
+      font-size: 32px;
+      font-weight: 800;
+      color: var(--accent);
+    }
+    .complete-stat-label {
+      font-size: 13px;
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+    #screen-complete .btn { max-width: 320px; }
+
+    /* ─── TOAST ─── */
+    #toast {
+      position: fixed;
+      bottom: calc(env(safe-area-inset-bottom, 20px) + 20px);
+      left: 50%;
+      transform: translateX(-50%) translateY(80px);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 99px;
+      padding: 12px 20px;
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text);
+      white-space: nowrap;
+      transition: transform 0.3s cubic-bezier(0.34,1.56,0.64,1), opacity 0.3s;
+      opacity: 0;
+      pointer-events: none;
+      z-index: 999;
+    }
+    #toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
+
+    /* ─── THEME TOGGLE ─── */
+    #theme-toggle {
+      margin-left: auto;
+      background: var(--surface);
+      border: 1.5px solid var(--border);
+      border-radius: 99px;
+      padding: 6px 14px;
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-muted);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: border-color 0.2s, color 0.2s;
+      -webkit-tap-highlight-color: transparent;
+      white-space: nowrap;
+    }
+    #theme-toggle:hover { border-color: var(--accent); color: var(--accent); }
+
+    /* ─── END CONFIRMATION MODAL ─── */
+    #end-modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.75);
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+    #end-modal-overlay.show { display: flex; }
+    #end-modal {
+      background: var(--surface);
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius);
+      padding: 32px 24px 24px;
+      width: 100%;
+      max-width: 340px;
+      text-align: center;
+      animation: pop-in 0.25s cubic-bezier(0.34,1.56,0.64,1) both;
+    }
+    #end-modal-emoji {
+      font-size: 52px;
+      margin-bottom: 12px;
+      display: block;
+    }
+    #end-modal-msg {
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--text);
+      margin-bottom: 24px;
+      line-height: 1.3;
+    }
+    #end-modal .modal-buttons {
+      display: flex;
+      gap: 10px;
+    }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 0; }
+  </style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ══════════════ SETUP SCREEN ══════════════ -->
+  <div class="screen active" id="screen-setup">
+    <div class="screen-header">
+      <span class="logo-icon">⚡</span>
+      <span class="screen-title">FitAlarm</span>
+      <button id="btn-open-history" style="margin-left:auto;background:var(--surface);border:1.5px solid var(--border);border-radius:99px;padding:6px 12px;font-size:13px;font-weight:600;color:var(--text-muted);cursor:pointer;">📋 History</button>
+      <button id="theme-toggle">🌙 Dark</button>
+    </div>
+
+    <div class="gap-20" style="margin-top: 12px; flex: 1;">
+
+      <div>
+        <label>Activity Type</label>
+        <div class="activity-grid">
+          <button class="activity-btn selected" data-activity="run">
+            <span class="icon">🏃</span>Run
+          </button>
+          <button class="activity-btn" data-activity="walk">
+            <span class="icon">🚶</span>Walk
+          </button>
+          <button class="activity-btn" data-activity="cycling">
+            <span class="icon">🚴</span>Cycling
+          </button>
+          <button class="activity-btn" data-activity="gym">
+            <span class="icon">🏋️</span>Gym
+          </button>
+          <button class="activity-btn" data-activity="squats">
+            <span class="icon">🦵</span>Squats 📷
+          </button>
+          <button class="activity-btn" data-activity="pushups">
+            <span class="icon">💪</span>Push-Ups 📷
+          </button>
+        </div>
+      </div>
+
+      <div>
+        <label id="target-label">Distance Goal (km)</label>
+        <input type="number" id="target-input" min="0.1" max="500" step="0.1"
+               value="5" inputmode="decimal" placeholder="5" />
+      </div>
+
+      <div>
+        <label>Alarm Time</label>
+        <input type="time" id="alarm-time-input" value="07:00" />
+      </div>
+
+    </div>
+
+    <div style="margin-top: 24px; padding-bottom: 8px; display:flex; flex-direction:column; gap:10px;">
+      <div style="
+        background: rgba(255,170,0,0.08);
+        border: 1px solid rgba(255,170,0,0.3);
+        border-radius: 12px;
+        padding: 10px 14px;
+        font-size: 13px;
+        color: var(--warn);
+        font-weight: 600;
+        text-align: center;
+      ">📵 Keep phone off silent mode for alarm to sound</div>
+      <button class="btn btn-primary" id="btn-set-alarm">
+        ⏰ Set Alarm
+      </button>
+    </div>
+  </div>
+
+  <!-- ══════════════ STANDBY SCREEN ══════════════ -->
+  <div class="screen" id="screen-standby">
+    <p class="alarm-label">Alarm Set For</p>
+    <p class="alarm-time-big" id="standby-alarm-time">07:00</p>
+    <div class="activity-badge" id="standby-badge">
+      <span id="standby-icon">🏃</span>
+      <span id="standby-goal-text">5.0 km Run</span>
+    </div>
+    <p class="countdown-label">Starts In</p>
+    <p id="countdown-display">00:00:00</p>
+    <div style="display:flex;gap:10px;margin-top:48px;width:100%;max-width:320px;">
+      <button class="btn btn-outline edit-btn" id="btn-edit-alarm" style="margin-top:0;flex:1;">✏️ Edit</button>
+      <button class="btn btn-warn btn-sm" id="btn-test-alarm" style="flex:1;">🔔 Test Now</button>
+    </div>
+    <div style="
+      margin-top: 20px;
+      background: rgba(255,170,0,0.08);
+      border: 1px solid rgba(255,170,0,0.3);
+      border-radius: 12px;
+      padding: 12px 16px;
+      font-size: 13px;
+      color: var(--warn);
+      font-weight: 600;
+      max-width: 320px;
+      text-align: center;
+    ">📵 Turn off Silent Mode so the alarm sounds</div>
+  </div>
+
+  <!-- ══════════════ ALARMING SCREEN ══════════════ -->
+  <div class="screen" id="screen-alarming">
+    <div class="alarm-pulse-ring">
+      <div class="alarm-pulse-center">⏰</div>
+    </div>
+    <p class="alarm-title">Time to Move!</p>
+    <p class="alarm-subtitle" id="alarming-goal-text">5.0 km Run — Let's go!</p>
+    <div class="actions">
+      <button class="btn btn-primary" id="btn-start-activity">🏃 Start Activity</button>
+      <button class="btn btn-warn btn-sm" id="btn-pause-sound-alarm">🔇 Pause Sound</button>
+    </div>
+  </div>
+
+  <!-- ══════════════ ACTIVE SCREEN ══════════════ -->
+  <div class="screen" id="screen-active">
+    <div class="screen-header">
+      <span class="logo-icon" id="active-icon">🏃</span>
+      <span class="screen-title" id="active-title">Running</span>
+      <div class="spacer"></div>
+      <div class="sound-indicator" id="sound-indicator">
+        <div class="sound-dot"></div>
+        <span>Alarm Active</span>
+      </div>
+    </div>
+
+    <div class="progress-ring-wrap">
+      <svg width="220" height="220" viewBox="0 0 220 220">
+        <circle class="progress-ring-bg" cx="110" cy="110" r="98"/>
+        <circle class="progress-ring-fill" id="progress-ring" cx="110" cy="110" r="98"
+          stroke-dasharray="615.75"
+          stroke-dashoffset="615.75"/>
+      </svg>
+      <div class="progress-center-text">
+        <span class="progress-value" id="progress-value">0.0</span>
+        <span class="progress-unit" id="progress-unit">km</span>
+      </div>
+    </div>
+
+    <p class="progress-target" id="progress-target">of 5.0 km</p>
+    <p id="gps-status" style="font-size:12px;color:var(--text-muted);margin-bottom:8px;display:none;">📡 Acquiring GPS signal...</p>
+
+    <div class="stats-row">
+      <div class="stat-card">
+        <div class="stat-value" id="stat-elapsed">00:00</div>
+        <div class="stat-label">Elapsed</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="stat-pace">—</div>
+        <div class="stat-label" id="stat-pace-label">Pace</div>
+      </div>
+    </div>
+
+    <div class="bottom-actions">
+      <button class="btn btn-warn btn-sm" id="btn-pause-sound-active">🔇 Pause Alarm Sound</button>
+      <button class="btn btn-primary" id="btn-complete">✅ Mark Complete</button>
+    </div>
+  </div>
+
+  <!-- ══════════════ COMPLETE SCREEN ══════════════ -->
+  <div class="screen" id="screen-complete">
+    <div class="confetti-wrap" id="complete-emoji">🎉</div>
+    <p class="complete-title" id="complete-title">Goal Complete!</p>
+    <p class="complete-sub" id="complete-sub">You crushed it!</p>
+    <div class="complete-stats">
+      <div class="complete-stat">
+        <span class="complete-stat-value" id="complete-distance">5.0</span>
+        <span class="complete-stat-label" id="complete-dist-label">km</span>
+      </div>
+      <div class="complete-stat">
+        <span class="complete-stat-value" id="complete-time">—</span>
+        <span class="complete-stat-label">Time</span>
+      </div>
+      <div class="complete-stat" id="complete-pace-wrap">
+        <span class="complete-stat-value" id="complete-pace">—</span>
+        <span class="complete-stat-label" id="complete-pace-label">min/km</span>
+      </div>
+    </div>
+    <div id="complete-badge" style="
+      background:rgba(0,255,136,0.08);
+      border:1px solid var(--accent);
+      border-radius:var(--radius);
+      padding:14px 20px;
+      font-size:14px;
+      color:var(--accent);
+      font-weight:600;
+      margin-bottom:28px;
+      max-width:320px;
+      text-align:center;
+    "></div>
+    <div style="display:flex;flex-direction:column;gap:10px;width:100%;max-width:320px;">
+      <button class="btn btn-primary" id="btn-new-alarm">⚡ Set New Alarm</button>
+      <button class="btn btn-outline btn-sm" id="btn-complete-history">📋 View History</button>
+    </div>
+  </div>
+
+</div>
+
+  <!-- ══════════════ CAMERA SCREEN ══════════════ -->
+  <div class="screen" id="screen-camera">
+    <div class="screen-header">
+      <span class="logo-icon" id="camera-icon">🦵</span>
+      <span class="screen-title" id="camera-title">Squats</span>
+      <div class="spacer"></div>
+      <div class="sound-indicator" id="camera-sound-indicator">
+        <div class="sound-dot"></div><span>Alarm Active</span>
+      </div>
+    </div>
+
+    <div style="position:relative;width:100%;aspect-ratio:4/3;border-radius:var(--radius);overflow:hidden;background:#000;flex-shrink:0;">
+      <video id="pose-video" autoplay playsinline muted style="width:100%;height:100%;object-fit:cover;transform:scaleX(-1);"></video>
+      <canvas id="pose-canvas" style="position:absolute;inset:0;width:100%;height:100%;transform:scaleX(-1);"></canvas>
+      <!-- Rep state badge: DOWN / UP -->
+      <div id="pose-state-badge" style="position:absolute;top:10px;left:10px;background:rgba(0,0,0,0.72);border-radius:10px;padding:6px 12px;font-size:13px;font-weight:700;color:#fff;display:none;"></div>
+      <!-- Status / inactivity warning -->
+      <div id="pose-status" style="position:absolute;bottom:10px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.75);border-radius:99px;padding:6px 14px;font-size:12px;color:#fff;font-weight:600;white-space:nowrap;">⏳ Loading pose model...</div>
+    </div>
+
+    <div style="text-align:center;padding:12px 0 4px;">
+      <span id="camera-rep-count" style="font-size:56px;font-weight:800;color:var(--text);font-variant-numeric:tabular-nums;display:inline-block;transition:transform 0.15s,color 0.15s;">0</span>
+      <span style="font-size:20px;color:var(--text-muted);font-weight:600;"> / <span id="camera-rep-target">10</span></span>
+      <div style="font-size:12px;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-top:2px;">Reps</div>
+    </div>
+
+    <div class="stats-row">
+      <div class="stat-card">
+        <div class="stat-value" id="camera-elapsed">00:00</div>
+        <div class="stat-label">Elapsed</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="camera-pace">—</div>
+        <div class="stat-label">reps/min</div>
+      </div>
+    </div>
+
+    <div class="bottom-actions">
+      <button class="btn btn-warn btn-sm" id="btn-pause-sound-camera">🔇 Pause Alarm Sound</button>
+      <button class="btn btn-primary" id="btn-camera-complete">✅ Mark Complete</button>
+    </div>
+  </div>
+
+  <!-- ══════════════ HISTORY SCREEN ══════════════ -->
+  <div class="screen" id="screen-history">
+    <div class="screen-header">
+      <span class="logo-icon">📋</span>
+      <span class="screen-title">History</span>
+      <div class="spacer"></div>
+      <button id="btn-close-history" style="background:var(--surface);border:1.5px solid var(--border);border-radius:99px;padding:6px 14px;font-size:13px;font-weight:600;color:var(--text-muted);cursor:pointer;">✕ Close</button>
+    </div>
+    <div id="history-list" style="flex:1;overflow-y:auto;padding-bottom:20px;"></div>
+  </div>
+
+<!-- ══════════════ END CONFIRMATION MODAL ══════════════ -->
+<div id="end-modal-overlay">
+  <div id="end-modal">
+    <span id="end-modal-emoji">😅</span>
+    <p id="end-modal-msg">Do you really want to end the activity?</p>
+    <div class="modal-buttons">
+      <button class="btn btn-outline" id="end-modal-no">Keep Going 💪</button>
+      <button class="btn btn-danger" id="end-modal-yes">End It</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+'use strict';
+
+// ────────────────────────────────────────────────
+// CONSTANTS
+// ────────────────────────────────────────────────
+const CIRCUMFERENCE = 2 * Math.PI * 98; // ~615.75
+const INACTIVITY_THRESHOLD_LOW = 0.8;   // m/s² magnitude — below = still
+const INACTIVITY_TIMEOUT_MS = 25000;    // 25s of stillness → resume alarm
+const GPS_MIN_DISTANCE_M = 5;           // ignore GPS jumps < 5m
+const GPS_MAX_ACCURACY_M = 40;          // ignore positions with accuracy > 40m
+
+const ACTIVITY_META = {
+  run:     { icon: '🏃', label: 'Run',      activeLabel: 'Running',     unit: 'km',   paceLabel: 'min/km'   },
+  walk:    { icon: '🚶', label: 'Walk',     activeLabel: 'Walking',     unit: 'km',   paceLabel: 'min/km'   },
+  cycling: { icon: '🚴', label: 'Cycling',  activeLabel: 'Cycling',     unit: 'km',   paceLabel: 'km/h'     },
+  gym:     { icon: '🏋️', label: 'Gym',     activeLabel: 'Gym Session', unit: 'min',  paceLabel: 'Remaining'},
+  squats:  { icon: '🦵', label: 'Squats',   activeLabel: 'Squats',      unit: 'reps', paceLabel: 'reps/min', camera: true },
+  pushups: { icon: '💪', label: 'Push-Ups', activeLabel: 'Push-Ups',    unit: 'reps', paceLabel: 'reps/min', camera: true },
+};
+
+// ────────────────────────────────────────────────
+// APP STATE
+// ────────────────────────────────────────────────
+const S = {
+  // config
+  activityType: 'run',
+  targetValue: 5,
+  alarmTime: '07:00',
+  // runtime
+  currentScreen: 'setup',
+  alarmSoundPaused: false,
+  activityStartTime: null,
+  currentDistance: 0,
+  lastPosition: null,
+  watchId: null,
+  standbyInterval: null,
+  elapsedInterval: null,
+  gymInterval: null,
+  gymSecondsLeft: 0,
+  cameraElapsedInterval: null,
+  inactivityCheckInterval: null,
+  lastMotionTime: Date.now(),
+  motionGranted: false,
+  wakeLock: null,
+  silentBuffer: null,
+  silentSource: null,
+};
+
+// ────────────────────────────────────────────────
+// STORAGE
+// ────────────────────────────────────────────────
+const Storage = {
+  save() {
+    try {
+      localStorage.setItem('fitalarm', JSON.stringify({
+        activityType: S.activityType,
+        targetValue: S.targetValue,
+        alarmTime: S.alarmTime,
+      }));
+    } catch(_) {}
+  },
+  load() {
+    try {
+      const d = JSON.parse(localStorage.getItem('fitalarm') || 'null');
+      if (d) {
+        S.activityType = d.activityType || 'run';
+        S.targetValue  = parseFloat(d.targetValue) || 5;
+        S.alarmTime    = d.alarmTime || '07:00';
+      }
+    } catch(_) {}
+  },
+  clear() {
+    try { localStorage.removeItem('fitalarm'); } catch(_) {}
+  },
+};
+
+// ────────────────────────────────────────────────
+// AUDIO ENGINE
+// ────────────────────────────────────────────────
+const Audio = {
+  ctx: null,
+  masterGain: null,
+  beepInterval: null,
+  isRunning: false,
+  silentSrc: null,
+
+  init() {
+    if (this.ctx) return;
+    try {
+      this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+      this.masterGain = this.ctx.createGain();
+      this.masterGain.gain.value = 1;
+      this.masterGain.connect(this.ctx.destination);
+      // Start silent loop to keep audio session alive (prevents iOS suspension)
+      this._startSilentLoop();
+    } catch(e) {
+      console.warn('AudioContext failed:', e);
+    }
+  },
+
+  _startSilentLoop() {
+    if (!this.ctx) return;
+    try {
+      const buf = this.ctx.createBuffer(1, this.ctx.sampleRate, this.ctx.sampleRate);
+      this.silentSrc = this.ctx.createBufferSource();
+      this.silentSrc.buffer = buf;
+      this.silentSrc.loop = true;
+      this.silentSrc.connect(this.ctx.destination);
+      this.silentSrc.start();
+    } catch(_) {}
+  },
+
+  async resume() {
+    if (this.ctx && this.ctx.state === 'suspended') {
+      try { await this.ctx.resume(); } catch(_) {}
+    }
+  },
+
+  // Siren: sweeps 880Hz→2600Hz→880Hz over ~0.9s, square wave, loud
+  _siren() {
+    if (!this.ctx || !this.masterGain) return;
+    try {
+      const t = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(880, t);
+      osc.frequency.linearRampToValueAtTime(2600, t + 0.45);
+      osc.frequency.linearRampToValueAtTime(880, t + 0.9);
+      gain.gain.setValueAtTime(0, t);
+      gain.gain.linearRampToValueAtTime(0.4, t + 0.02);
+      gain.gain.setValueAtTime(0.4, t + 0.88);
+      gain.gain.linearRampToValueAtTime(0, t + 0.9);
+      osc.connect(gain);
+      gain.connect(this.masterGain);
+      osc.start(t);
+      osc.stop(t + 0.95);
+    } catch(_) {}
+  },
+
+  start() {
+    if (this.isRunning) return;
+    this.isRunning = true;
+    this.resume();
+    this._siren();
+    this.beepInterval = setInterval(() => {
+      if (this.isRunning && !this.isMuted) this._siren();
+    }, 950);
+  },
+
+  isMuted: false,
+
+  pauseSound() {
+    this.isMuted = true;
+    if (this.masterGain && this.ctx) {
+      this.masterGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.05);
+    }
+  },
+
+  resumeSound() {
+    this.isMuted = false;
+    if (this.masterGain && this.ctx) {
+      this.masterGain.gain.setTargetAtTime(1, this.ctx.currentTime, 0.05);
+    }
+    if (!this.isRunning) this.start();
+    this.resume();
+  },
+
+  stop() {
+    this.isRunning = false;
+    this.isMuted = false;
+    clearInterval(this.beepInterval);
+    if (this.masterGain && this.ctx) {
+      this.masterGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.05);
+    }
+    setTimeout(() => {
+      if (this.silentSrc) { try { this.silentSrc.stop(); } catch(_) {} }
+      if (this.ctx) { try { this.ctx.close(); } catch(_) {} }
+      this.ctx = null; this.masterGain = null;
+    }, 500);
+  },
+};
+
+// ────────────────────────────────────────────────
+// GPS TRACKER
+// ────────────────────────────────────────────────
+const GPS = {
+  onUpdate: null,
+
+  start(callback) {
+    this.onUpdate = callback;
+    S.currentDistance = 0;
+    S.lastPosition = null;
+    const statusEl = document.getElementById('gps-status');
+    if (statusEl) { statusEl.style.display = 'block'; statusEl.textContent = '📡 Acquiring GPS signal...'; }
+    if (!navigator.geolocation) {
+      showToast('GPS not available — distance won\'t track');
+      if (statusEl) { statusEl.textContent = '⚠️ GPS not available in this browser'; }
+      return;
+    }
+    S.watchId = navigator.geolocation.watchPosition(
+      pos => this._onPos(pos, statusEl),
+      err => this._onErr(err, statusEl),
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
+    );
+  },
+
+  stop() {
+    if (S.watchId !== null) {
+      navigator.geolocation.clearWatch(S.watchId);
+      S.watchId = null;
+    }
+  },
+
+  _haversine(lat1, lon1, lat2, lon2) {
+    const R = 6371000; // meters
+    const toRad = d => d * Math.PI / 180;
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a = Math.sin(dLat/2)**2 +
+              Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon/2)**2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  },
+
+  _onPos(pos, statusEl) {
+    const { latitude: lat, longitude: lon, accuracy } = pos.coords;
+    if (statusEl && statusEl.style.display !== 'none') {
+      if (accuracy > GPS_MAX_ACCURACY_M) {
+        statusEl.textContent = `📡 Improving accuracy (±${Math.round(accuracy)}m)...`;
+      } else {
+        statusEl.textContent = `✅ GPS locked (±${Math.round(accuracy)}m)`;
+        setTimeout(() => { statusEl.style.display = 'none'; }, 2000);
+      }
+    }
+    // Hide the "tap complete" hint once GPS is working
+    const completeBtn = document.getElementById('btn-complete');
+    if (completeBtn) completeBtn.style.outline = '';
+    if (accuracy > GPS_MAX_ACCURACY_M) return;
+    if (S.lastPosition) {
+      const { lat: prevLat, lon: prevLon } = S.lastPosition;
+      const dist = this._haversine(prevLat, prevLon, lat, lon);
+      if (dist >= GPS_MIN_DISTANCE_M) {
+        S.currentDistance += dist / 1000; // to km
+        S.lastPosition = { lat, lon };
+        if (this.onUpdate) this.onUpdate(S.currentDistance);
+      }
+    } else {
+      S.lastPosition = { lat, lon };
+    }
+  },
+
+  _onErr(err, statusEl) {
+    const completeBtn = document.getElementById('btn-complete');
+    if (err.code === err.PERMISSION_DENIED) {
+      showToast('GPS denied — tap Mark Complete when you\'re done', 5000);
+      if (statusEl) {
+        statusEl.style.display = 'block';
+        statusEl.textContent = '❌ GPS denied — tap Mark Complete below when done';
+        statusEl.style.color = 'var(--danger)';
+      }
+    } else {
+      if (statusEl) {
+        statusEl.style.display = 'block';
+        statusEl.textContent = '⚠️ GPS unavailable — tap Mark Complete when done';
+        statusEl.style.color = 'var(--warn)';
+      }
+    }
+    // Pulse the complete button so user knows what to do
+    if (completeBtn) {
+      completeBtn.style.animation = 'pulse-center 1.4s ease-in-out infinite';
+      completeBtn.textContent = '✅ Mark Complete (GPS unavailable)';
+    }
+  },
+};
+
+// ────────────────────────────────────────────────
+// MOTION WATCHER (inactivity detection)
+// ────────────────────────────────────────────────
+const Motion = {
+  handler: null,
+  checkInterval: null,
+  onInactive: null,
+
+  async start(callback) {
+    this.onInactive = callback;
+    S.lastMotionTime = Date.now();
+
+    if (typeof DeviceMotionEvent !== 'undefined' &&
+        typeof DeviceMotionEvent.requestPermission === 'function') {
+      try {
+        const perm = await DeviceMotionEvent.requestPermission();
+        if (perm !== 'granted') {
+          this._fallbackVisibility(callback);
+          return;
+        }
+      } catch(_) {
+        this._fallbackVisibility(callback);
+        return;
+      }
+    }
+
+    this.handler = e => {
+      const a = e.accelerationIncludingGravity || e.acceleration;
+      if (!a) return;
+      const mag = Math.sqrt((a.x||0)**2 + (a.y||0)**2 + (a.z||0)**2);
+      if (mag > INACTIVITY_THRESHOLD_LOW) {
+        S.lastMotionTime = Date.now();
+      }
+    };
+    window.addEventListener('devicemotion', this.handler);
+
+    this.checkInterval = setInterval(() => {
+      const still = Date.now() - S.lastMotionTime > INACTIVITY_TIMEOUT_MS;
+      if (still && Audio.isMuted && this.onInactive) {
+        this.onInactive();
+      }
+    }, 5000);
+  },
+
+  _fallbackVisibility(callback) {
+    // If motion not available, resume alarm when page becomes hidden
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden && Audio.isMuted && callback) callback();
+    });
+  },
+
+  stop() {
+    if (this.handler) window.removeEventListener('devicemotion', this.handler);
+    clearInterval(this.checkInterval);
+    this.handler = null; this.checkInterval = null;
+  },
+};
+
+// ────────────────────────────────────────────────
+// WAKE LOCK
+// ────────────────────────────────────────────────
+async function requestWakeLock() {
+  if ('wakeLock' in navigator) {
+    try {
+      S.wakeLock = await navigator.wakeLock.request('screen');
+    } catch(_) {}
+  }
+}
+function releaseWakeLock() {
+  if (S.wakeLock) { try { S.wakeLock.release(); } catch(_) {} S.wakeLock = null; }
+}
+
+// ────────────────────────────────────────────────
+// ALARM SCHEDULER
+// ────────────────────────────────────────────────
+const Scheduler = {
+  start() {
+    clearInterval(S.standbyInterval);
+    S.standbyInterval = setInterval(() => this._check(), 1000);
+    this._check();
+    this._updateCountdown();
+  },
+
+  _parseTime(hhmm) {
+    const [h, m] = hhmm.split(':').map(Number);
+    return { h, m };
+  },
+
+  _check() {
+    const now = new Date();
+    const { h, m } = this._parseTime(S.alarmTime);
+    if (now.getHours() === h && now.getMinutes() === m && now.getSeconds() < 5) {
+      if (S.currentScreen === 'standby') {
+        clearInterval(S.standbyInterval);
+        triggerAlarm();
+      }
+    }
+    this._updateCountdown();
+  },
+
+  _updateCountdown() {
+    const el = document.getElementById('countdown-display');
+    if (!el) return;
+    const now = new Date();
+    const { h, m } = this._parseTime(S.alarmTime);
+    let target = new Date(now);
+    target.setHours(h, m, 0, 0);
+    if (target <= now) target.setDate(target.getDate() + 1);
+    let diff = Math.floor((target - now) / 1000);
+    const hh = String(Math.floor(diff / 3600)).padStart(2, '0');
+    const mm = String(Math.floor((diff % 3600) / 60)).padStart(2, '0');
+    const ss = String(diff % 60).padStart(2, '0');
+    el.textContent = `${hh}:${mm}:${ss}`;
+  },
+
+  stop() { clearInterval(S.standbyInterval); },
+};
+
+// ────────────────────────────────────────────────
+// ELAPSED TIMER
+// ────────────────────────────────────────────────
+function startElapsedTimer() {
+  S.activityStartTime = Date.now();
+  clearInterval(S.elapsedInterval);
+  S.elapsedInterval = setInterval(() => {
+    const secs = Math.floor((Date.now() - S.activityStartTime) / 1000);
+    const mm = String(Math.floor(secs / 60)).padStart(2, '0');
+    const ss = String(secs % 60).padStart(2, '0');
+    document.getElementById('stat-elapsed').textContent = `${mm}:${ss}`;
+
+    // Pace calculation
+    const elapsedMin = secs / 60;
+    if (S.activityType === 'cycling') {
+      const kmh = S.currentDistance > 0 ? (S.currentDistance / (secs / 3600)).toFixed(1) : '—';
+      document.getElementById('stat-pace').textContent = kmh !== '—' ? kmh : '—';
+    } else if (S.activityType !== 'gym') {
+      const pace = S.currentDistance > 0
+        ? (elapsedMin / S.currentDistance).toFixed(1)
+        : '—';
+      document.getElementById('stat-pace').textContent = pace !== '—' ? `${pace}` : '—';
+    }
+  }, 1000);
+}
+
+function startGymTimer() {
+  S.gymSecondsLeft = S.targetValue * 60;
+  S.activityStartTime = Date.now();
+  document.getElementById('progress-value').textContent = S.targetValue.toString();
+  document.getElementById('stat-pace-label').textContent = 'Remaining';
+  clearInterval(S.gymInterval);
+  S.gymInterval = setInterval(() => {
+    S.gymSecondsLeft -= 1;
+    const elapsed = Math.floor((Date.now() - S.activityStartTime) / 1000);
+    const em = String(Math.floor(elapsed / 60)).padStart(2, '0');
+    const es = String(elapsed % 60).padStart(2, '0');
+    document.getElementById('stat-elapsed').textContent = `${em}:${es}`;
+
+    const minsLeft = Math.ceil(S.gymSecondsLeft / 60);
+    document.getElementById('stat-pace').textContent = `${minsLeft}m`;
+
+    const pct = 1 - (S.gymSecondsLeft / (S.targetValue * 60));
+    updateRing(pct);
+    document.getElementById('progress-value').textContent =
+      Math.max(0, Math.ceil(S.gymSecondsLeft / 60)).toString();
+
+    if (S.gymSecondsLeft <= 0) {
+      clearInterval(S.gymInterval);
+      completeActivity();
+    }
+  }, 1000);
+}
+
+// ────────────────────────────────────────────────
+// UI HELPERS
+// ────────────────────────────────────────────────
+function navigateTo(screenName) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById(`screen-${screenName}`).classList.add('active');
+  S.currentScreen = screenName;
+}
+
+function updateRing(pct) {
+  const offset = CIRCUMFERENCE * (1 - Math.min(pct, 1));
+  document.getElementById('progress-ring').style.strokeDashoffset = offset;
+}
+
+function showToast(msg, duration = 3000) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), duration);
+}
+
+function setSoundIndicator(paused) {
+  const el = document.getElementById('sound-indicator');
+  if (paused) {
+    el.classList.add('paused');
+    el.innerHTML = '<div class="sound-dot"></div><span>Sound Paused</span>';
+    document.getElementById('btn-pause-sound-active').textContent = '🔔 Resume Sound';
+  } else {
+    el.classList.remove('paused');
+    el.innerHTML = '<div class="sound-dot"></div><span>Alarm Active</span>';
+    document.getElementById('btn-pause-sound-active').textContent = '🔇 Pause Alarm Sound';
+  }
+}
+
+function formatTime(ms) {
+  const s = Math.floor(ms / 1000);
+  const m = Math.floor(s / 60);
+  const h = Math.floor(m / 60);
+  if (h > 0) return `${h}h ${m % 60}m`;
+  return `${m}m ${s % 60}s`;
+}
+
+// ────────────────────────────────────────────────
+// CORE FLOWS
+// ────────────────────────────────────────────────
+function triggerAlarm() {
+  Audio.start();
+  const meta = ACTIVITY_META[S.activityType];
+  const goalText = S.activityType === 'gym'
+    ? `${S.targetValue} min ${meta.label} — Let's go!`
+    : `${S.targetValue.toFixed(1)} ${meta.unit} ${meta.label} — Let's go!`;
+  document.getElementById('alarming-goal-text').textContent = goalText;
+  navigateTo('alarming');
+
+  Motion.start(() => {
+    if (Audio.isMuted) {
+      Audio.resumeSound();
+      setSoundIndicator(false);
+      showToast('Inactivity detected — alarm resumed');
+    }
+  });
+}
+
+async function startCameraActivity() {
+  const meta = ACTIVITY_META[S.activityType];
+  document.getElementById('camera-icon').textContent   = meta.icon;
+  document.getElementById('camera-title').textContent  = meta.activeLabel;
+  document.getElementById('camera-rep-target').textContent = S.targetValue;
+  document.getElementById('camera-rep-count').textContent  = '0';
+  document.getElementById('camera-elapsed').textContent    = '00:00';
+  document.getElementById('camera-pace').textContent       = '—';
+  const si = document.getElementById('camera-sound-indicator');
+  si.classList.remove('paused');
+  si.innerHTML = '<div class="sound-dot"></div><span>Alarm Active</span>';
+
+  navigateTo('camera');
+  requestWakeLock();
+  S.activityStartTime = Date.now();
+
+  // Elapsed timer for camera screen
+  clearInterval(S.cameraElapsedInterval);
+  S.cameraElapsedInterval = setInterval(() => {
+    const secs = Math.floor((Date.now() - S.activityStartTime) / 1000);
+    const mm = String(Math.floor(secs/60)).padStart(2,'0');
+    const ss = String(secs%60).padStart(2,'0');
+    document.getElementById('camera-elapsed').textContent = `${mm}:${ss}`;
+    const rpm = secs > 0 ? (PoseTracker.repCount / (secs/60)).toFixed(1) : '—';
+    document.getElementById('camera-pace').textContent = rpm;
+  }, 1000);
+
+  await PoseTracker.start(S.activityType, (reps) => {
+    document.getElementById('camera-rep-count').textContent = reps;
+    if (reps >= S.targetValue) completeActivity(false);
+  });
+}
+
+function startActivity() {
+  S.alarmSoundPaused = false;
+  const meta = ACTIVITY_META[S.activityType];
+
+  if (meta.camera) { startCameraActivity(); return; }
+
+  document.getElementById('active-icon').textContent = meta.icon;
+  document.getElementById('active-title').textContent = meta.activeLabel;
+  document.getElementById('progress-unit').textContent = meta.unit;
+  document.getElementById('stat-pace-label').textContent = meta.paceLabel;
+  updateRing(0);
+  setSoundIndicator(false);
+
+  if (S.activityType === 'gym') {
+    document.getElementById('progress-target').textContent = `of ${S.targetValue} min`;
+    document.getElementById('progress-value').textContent = S.targetValue.toString();
+  } else {
+    document.getElementById('progress-target').textContent = `of ${S.targetValue.toFixed(1)} km`;
+    document.getElementById('progress-value').textContent = '0.0';
+    GPS.start(dist => {
+      const d = Math.min(dist, S.targetValue);
+      document.getElementById('progress-value').textContent = d.toFixed(2);
+      updateRing(d / S.targetValue);
+      if (dist >= S.targetValue) completeActivity();
+    });
+  }
+
+  requestWakeLock();
+  navigateTo('active');
+
+  if (S.activityType === 'gym') {
+    startGymTimer();
+  } else {
+    startElapsedTimer();
+  }
+}
+
+function completeActivity(earlyEnd = false) {
+  Audio.stop();
+  GPS.stop();
+  Motion.stop();
+  PoseTracker.stop();
+  releaseWakeLock();
+  clearInterval(S.elapsedInterval);
+  clearInterval(S.gymInterval);
+  clearInterval(S.cameraElapsedInterval);
+
+  const elapsed = S.activityStartTime ? Date.now() - S.activityStartTime : 0;
+  const elapsedSec = Math.floor(elapsed / 1000);
+  const meta = ACTIVITY_META[S.activityType];
+
+  // Save history record
+  let actual, unit;
+  const isCam = meta.camera;
+  if (isCam) {
+    actual = String(PoseTracker.repCount); unit = 'reps';
+  } else if (S.activityType === 'gym') {
+    actual = String(S.targetValue); unit = 'min';
+  } else {
+    actual = (S.currentDistance > 0 ? S.currentDistance : (earlyEnd ? S.currentDistance : S.targetValue)).toFixed(2);
+    unit = 'km';
+  }
+  History.save({
+    timestamp: Date.now(),
+    activityType: S.activityType,
+    icon: meta.icon,
+    label: meta.label,
+    goal: `${S.targetValue} ${meta.unit}`,
+    actual,
+    unit,
+    elapsed: formatTime(elapsed),
+    status: earlyEnd ? 'early' : 'completed',
+  });
+
+  document.getElementById('complete-title').textContent = 'Goal Complete!';
+  document.getElementById('complete-time').textContent = formatTime(elapsed);
+
+  const paceWrap = document.getElementById('complete-pace-wrap');
+
+  if (isCam) {
+    document.getElementById('complete-emoji').textContent = meta.icon;
+    document.getElementById('complete-distance').textContent = PoseTracker.repCount;
+    document.getElementById('complete-dist-label').textContent = 'reps';
+    document.getElementById('complete-sub').textContent = `${PoseTracker.repCount} ${meta.label} done!`;
+    document.getElementById('complete-badge').textContent = earlyEnd
+      ? '⚡ Good effort — every rep counts!'
+      : `🎯 ${S.targetValue} ${meta.label} complete. Let's go!`;
+    paceWrap.style.display = 'none';
+  } else if (S.activityType === 'gym') {
+    document.getElementById('complete-emoji').textContent = '🏋️';
+    document.getElementById('complete-distance').textContent = S.targetValue;
+    document.getElementById('complete-dist-label').textContent = 'min';
+    document.getElementById('complete-sub').textContent = `${S.targetValue} min Gym session done!`;
+    document.getElementById('complete-badge').textContent = '💪 Strength built. Consistency is everything.';
+    paceWrap.style.display = 'none';
+  } else {
+    const dist = S.currentDistance > 0 ? S.currentDistance : S.targetValue;
+    document.getElementById('complete-emoji').textContent = meta.icon;
+    document.getElementById('complete-distance').textContent = dist.toFixed(2);
+    document.getElementById('complete-dist-label').textContent = 'km';
+    document.getElementById('complete-sub').textContent = `${dist.toFixed(2)} km ${meta.label} complete!`;
+    paceWrap.style.display = 'flex';
+
+    // Pace
+    const elapsedMin = elapsedSec / 60;
+    if (S.activityType === 'cycling' && dist > 0) {
+      const kmh = (dist / (elapsedSec / 3600)).toFixed(1);
+      document.getElementById('complete-pace').textContent = kmh;
+      document.getElementById('complete-pace-label').textContent = 'km/h';
+    } else if (dist > 0) {
+      const pace = (elapsedMin / dist).toFixed(1);
+      document.getElementById('complete-pace').textContent = pace;
+      document.getElementById('complete-pace-label').textContent = 'min/km';
+    } else {
+      paceWrap.style.display = 'none';
+    }
+
+    // Motivational badge
+    const badges = {
+      run:     '🔥 You ran it. Most people stayed on the couch.',
+      walk:    '🚶 Every step counts. Keep showing up.',
+      cycling: '🚴 Pedal by pedal, you got it done.',
+    };
+    document.getElementById('complete-badge').textContent = badges[S.activityType] || '🎯 Goal achieved!';
+  }
+
+  navigateTo('complete');
+}
+
+function resetToSetup() {
+  Audio.stop();
+  GPS.stop();
+  Motion.stop();
+  PoseTracker.stop();
+  Scheduler.stop();
+  releaseWakeLock();
+  clearInterval(S.elapsedInterval);
+  clearInterval(S.gymInterval);
+  clearInterval(S.cameraElapsedInterval);
+  S.currentDistance = 0;
+  S.lastPosition = null;
+  S.activityStartTime = null;
+  S.alarmSoundPaused = false;
+
+  // Restore form
+  document.querySelectorAll('.activity-btn').forEach(b => {
+    b.classList.toggle('selected', b.dataset.activity === S.activityType);
+  });
+  document.getElementById('target-input').value = S.targetValue;
+  document.getElementById('alarm-time-input').value = S.alarmTime;
+  updateTargetLabel();
+
+  navigateTo('setup');
+}
+
+function updateTargetLabel() {
+  const t = S.activityType;
+  const isGym    = t === 'gym';
+  const isCamera = t === 'squats' || t === 'pushups';
+  document.getElementById('target-label').textContent =
+    isGym ? 'Duration Goal (minutes)' : isCamera ? 'Rep Goal' : 'Distance Goal (km)';
+  document.getElementById('target-input').placeholder = isGym ? '30' : isCamera ? '20' : '5';
+  document.getElementById('target-input').step = (isGym || isCamera) ? '1' : '0.1';
+  document.getElementById('target-input').value =
+    isGym ? '30' : isCamera ? '20' : '5';
+}
+
+// ────────────────────────────────────────────────
+// EVENT HANDLERS
+// ────────────────────────────────────────────────
+
+// Activity type buttons
+document.querySelectorAll('.activity-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.activity-btn').forEach(b => b.classList.remove('selected'));
+    btn.classList.add('selected');
+    S.activityType = btn.dataset.activity;
+    updateTargetLabel();
+  });
+});
+
+// Set Alarm
+document.getElementById('btn-set-alarm').addEventListener('click', async () => {
+  const targetVal = parseFloat(document.getElementById('target-input').value);
+  const timeVal   = document.getElementById('alarm-time-input').value;
+
+  if (!targetVal || targetVal <= 0) {
+    showToast('Please enter a valid goal');
+    return;
+  }
+  if (!timeVal) {
+    showToast('Please set an alarm time');
+    return;
+  }
+
+  S.targetValue = targetVal;
+  S.alarmTime   = timeVal;
+  Storage.save();
+
+  // IMPORTANT: init AudioContext on this user gesture
+  Audio.init();
+  await Audio.resume();
+
+  // Update standby UI
+  const meta = ACTIVITY_META[S.activityType];
+  document.getElementById('standby-alarm-time').textContent = timeVal;
+  document.getElementById('standby-icon').textContent = meta.icon;
+  document.getElementById('standby-goal-text').textContent =
+    S.activityType === 'gym'
+      ? `${targetVal} min ${meta.label}`
+      : `${targetVal.toFixed(1)} ${meta.unit} ${meta.label}`;
+
+  navigateTo('standby');
+  Scheduler.start();
+});
+
+// Edit alarm
+document.getElementById('btn-edit-alarm').addEventListener('click', () => {
+  Scheduler.stop();
+  resetToSetup();
+});
+
+// Test alarm now (demo helper)
+document.getElementById('btn-test-alarm').addEventListener('click', async () => {
+  Scheduler.stop();
+  Audio.init();
+  await Audio.resume();
+  triggerAlarm();
+});
+
+// Alarming screen — Pause Sound
+document.getElementById('btn-pause-sound-alarm').addEventListener('click', async () => {
+  await Audio.resume();
+  Audio.pauseSound();
+  showToast('Sound paused — start moving!');
+});
+
+// Alarming screen — Start Activity
+document.getElementById('btn-start-activity').addEventListener('click', async () => {
+  await Audio.resume();
+  startActivity();
+});
+
+// Active screen — Pause/Resume Sound
+document.getElementById('btn-pause-sound-active').addEventListener('click', async () => {
+  await Audio.resume();
+  if (Audio.isMuted) {
+    Audio.resumeSound();
+    setSoundIndicator(false);
+    showToast('Alarm sound resumed');
+  } else {
+    Audio.pauseSound();
+    setSoundIndicator(true);
+    S.lastMotionTime = Date.now(); // reset inactivity clock
+    showToast('Sound paused — keep moving!');
+  }
+});
+
+// ────────────────────────────────────────────────
+// 3-STEP END CONFIRMATION
+// ────────────────────────────────────────────────
+const EndConfirm = {
+  step: 0,
+  steps: [
+    { emoji: '😅', msg: 'Do you really want to end the activity?', yes: 'End It',       no: 'Keep Going 💪' },
+    { emoji: '😤', msg: 'Really?',                                  yes: 'Yes, End It',  no: 'No, Keep Going!' },
+    { emoji: '🥺', msg: 'Weally :(',                                yes: 'Fine... End',  no: 'OK OK I\'ll Finish!' },
+  ],
+
+  open() {
+    this.step = 0;
+    this._render();
+    document.getElementById('end-modal-overlay').classList.add('show');
+  },
+
+  _render() {
+    const s = this.steps[this.step];
+    document.getElementById('end-modal-emoji').textContent = s.emoji;
+    document.getElementById('end-modal-msg').textContent   = s.msg;
+    document.getElementById('end-modal-yes').textContent   = s.yes;
+    document.getElementById('end-modal-no').textContent    = s.no;
+    // Re-trigger animation
+    const modal = document.getElementById('end-modal');
+    modal.style.animation = 'none';
+    modal.offsetHeight; // reflow
+    modal.style.animation = '';
+  },
+
+  confirm() {
+    this.step++;
+    if (this.step >= this.steps.length) {
+      this.close();
+      completeActivity(true);
+    } else {
+      this._render();
+    }
+  },
+
+  cancel() {
+    this.close();
+    showToast('That\'s the spirit! Keep going! 🔥');
+  },
+
+  close() {
+    document.getElementById('end-modal-overlay').classList.remove('show');
+  },
+};
+
+document.getElementById('end-modal-yes').addEventListener('click', () => EndConfirm.confirm());
+document.getElementById('end-modal-no').addEventListener('click',  () => EndConfirm.cancel());
+
+// Active screen — Mark Complete (manual end → triggers confirmation)
+document.getElementById('btn-complete').addEventListener('click', () => {
+  EndConfirm.open();
+});
+
+// Complete screen — New Alarm
+document.getElementById('btn-new-alarm').addEventListener('click', () => {
+  resetToSetup();
+});
+
+// History navigation
+document.getElementById('btn-open-history').addEventListener('click', () => {
+  renderHistoryScreen();
+  navigateTo('history');
+});
+document.getElementById('btn-complete-history').addEventListener('click', () => {
+  renderHistoryScreen();
+  navigateTo('history');
+});
+document.getElementById('btn-close-history').addEventListener('click', () => {
+  navigateTo('setup');
+});
+
+// Camera screen — Pause/Resume Sound
+document.getElementById('btn-pause-sound-camera').addEventListener('click', async () => {
+  await Audio.resume();
+  const si = document.getElementById('camera-sound-indicator');
+  if (Audio.isMuted) {
+    Audio.resumeSound();
+    si.classList.remove('paused');
+    si.innerHTML = '<div class="sound-dot"></div><span>Alarm Active</span>';
+    document.getElementById('btn-pause-sound-camera').textContent = '🔇 Pause Alarm Sound';
+    showToast('Alarm sound resumed');
+  } else {
+    Audio.pauseSound();
+    si.classList.add('paused');
+    si.innerHTML = '<div class="sound-dot"></div><span>Sound Paused</span>';
+    document.getElementById('btn-pause-sound-camera').textContent = '🔔 Resume Sound';
+    showToast('Sound paused — keep moving!');
+  }
+});
+
+// Camera screen — Mark Complete (goes through 3-step confirm)
+document.getElementById('btn-camera-complete').addEventListener('click', () => {
+  EndConfirm.open();
+});
+
+// Page visibility: resume alarm if hidden and sound was paused
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && Audio.isMuted && Audio.isRunning) {
+    Audio.resumeSound();
+    setSoundIndicator(false);
+    showToast('Screen hidden — alarm resumed');
+  }
+});
+
+// Re-acquire wake lock on visibility change
+document.addEventListener('visibilitychange', async () => {
+  if (!document.hidden && S.currentScreen === 'active' && !S.wakeLock) {
+    await requestWakeLock();
+  }
+});
+
+// ────────────────────────────────────────────────
+// HISTORY
+// ────────────────────────────────────────────────
+const History = {
+  _key: 'fitalarm-history',
+  load()  { try { return JSON.parse(localStorage.getItem(this._key) || '[]'); } catch(_) { return []; } },
+  save(r) {
+    const all = this.load();
+    all.unshift(r);
+    if (all.length > 100) all.splice(100);
+    try { localStorage.setItem(this._key, JSON.stringify(all)); } catch(_) {}
+  },
+};
+
+function renderHistoryScreen() {
+  const records = History.load();
+  const list = document.getElementById('history-list');
+  if (!records.length) {
+    list.innerHTML = `<div style="text-align:center;padding:60px 20px;color:var(--text-muted);">
+      <div style="font-size:48px;margin-bottom:16px;">📋</div>
+      <div style="font-size:16px;font-weight:600;">No workouts yet</div>
+      <div style="font-size:13px;margin-top:8px;">Complete an activity to see it here</div>
+    </div>`;
+    return;
+  }
+  list.innerHTML = records.map(r => {
+    const d = new Date(r.timestamp);
+    const dateStr = d.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+    const timeStr = d.toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit' });
+    const isCompleted = r.status === 'completed';
+    const statusColor = isCompleted ? 'var(--accent)' : 'var(--warn)';
+    const statusBg    = isCompleted ? 'rgba(0,255,136,0.08)' : 'rgba(255,170,0,0.08)';
+    const statusLabel = isCompleted ? '✅ Completed' : '⚡ Ended Early';
+    return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:10px;">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+        <span style="font-size:28px;">${r.icon}</span>
+        <div style="flex:1;">
+          <div style="font-weight:700;font-size:15px;color:var(--text);">${r.label}</div>
+          <div style="font-size:12px;color:var(--text-muted);">${dateStr} · ${timeStr}</div>
+        </div>
+        <div style="font-size:12px;font-weight:700;color:${statusColor};background:${statusBg};border:1px solid ${statusColor};border-radius:99px;padding:4px 10px;">${statusLabel}</div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">
+        <div style="text-align:center;background:var(--bg);border-radius:8px;padding:8px;">
+          <div style="font-size:16px;font-weight:700;color:var(--text);">${r.actual}</div>
+          <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;">${r.unit}</div>
+        </div>
+        <div style="text-align:center;background:var(--bg);border-radius:8px;padding:8px;">
+          <div style="font-size:16px;font-weight:700;color:var(--text);">${r.elapsed}</div>
+          <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;">Time</div>
+        </div>
+        <div style="text-align:center;background:var(--bg);border-radius:8px;padding:8px;">
+          <div style="font-size:16px;font-weight:700;color:var(--text-muted);">${r.goal}</div>
+          <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;">Goal</div>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ────────────────────────────────────────────────
+// POSE TRACKER (squats & push-ups)
+// ────────────────────────────────────────────────
+const PoseTracker = {
+  detector: null,
+  stream:   null,
+  animId:   null,
+  repCount: 0,
+  isDown:   false,
+  onRep:    null,
+  type:     null,
+
+  async load() {
+    if (window.poseDetection) return true;
+    // Lazily load TF.js + pose-detection from CDN
+    const scripts = [
+      'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core@4.2.0/dist/tf-core.min.js',
+      'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl@4.2.0/dist/tf-backend-webgl.min.js',
+      'https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@2.1.0/dist/pose-detection.min.js',
+    ];
+    for (const src of scripts) {
+      await new Promise((res, rej) => {
+        const s = document.createElement('script');
+        s.src = src; s.crossOrigin = 'anonymous';
+        s.onload = res; s.onerror = rej;
+        document.head.appendChild(s);
+      });
+    }
+    return !!window.poseDetection;
+  },
+
+  async start(type, onRep) {
+    this.type = type; this.onRep = onRep;
+    this.repCount = 0; this.isDown = false;
+    const statusEl = document.getElementById('pose-status');
+    const set = (msg) => { if (statusEl) { statusEl.style.display = 'block'; statusEl.textContent = msg; } };
+
+    // Camera
+    try {
+      this.stream = await navigator.mediaDevices.getUserMedia(
+        { video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } } }
+      );
+      const vid = document.getElementById('pose-video');
+      vid.srcObject = this.stream;
+      await new Promise(r => { vid.onloadedmetadata = r; });
+      await vid.play();
+    } catch(e) {
+      set('❌ Camera permission denied');
+      return false;
+    }
+
+    // Load model
+    set('⏳ Loading pose model (first time is slow)...');
+    try {
+      await this.load();
+      await window.tf.setBackend('webgl');
+      this.detector = await window.poseDetection.createDetector(
+        window.poseDetection.SupportedModels.MoveNet,
+        { modelType: window.poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING }
+      );
+      set('✅ Ready! Get in position...');
+      setTimeout(() => { if (statusEl) statusEl.style.display = 'none'; }, 2500);
+    } catch(e) {
+      set('⚠️ Pose model failed to load — count manually and tap Complete');
+      return false;
+    }
+
+    this._loop();
+    return true;
+  },
+
+  _loop() {
+    this.animId = requestAnimationFrame(async () => {
+      if (!this.stream) return;
+      await this._detect();
+      this._loop();
+    });
+  },
+
+  async _detect() {
+    if (!this.detector) return;
+    const vid = document.getElementById('pose-video');
+    if (!vid || vid.readyState < 2) return;
+    try {
+      const poses = await this.detector.estimatePoses(vid);
+      if (poses[0]) { this._draw(poses[0]); this._count(poses[0]); }
+    } catch(_) {}
+  },
+
+  _angle(a, b, c) {
+    const ab = { x: a.x - b.x, y: a.y - b.y };
+    const cb = { x: c.x - b.x, y: c.y - b.y };
+    const dot = ab.x*cb.x + ab.y*cb.y;
+    const mag = Math.hypot(ab.x, ab.y) * Math.hypot(cb.x, cb.y);
+    return mag ? Math.acos(Math.max(-1, Math.min(1, dot/mag))) * (180/Math.PI) : 0;
+  },
+
+  _kp(pose, name) { return pose.keypoints.find(k => k.name === name); },
+
+  _count(pose) {
+    const C = 0.3; // min confidence
+    if (this.type === 'squats') {
+      const H = this._kp(pose,'left_hip')   || this._kp(pose,'right_hip');
+      const K = this._kp(pose,'left_knee')  || this._kp(pose,'right_knee');
+      const A = this._kp(pose,'left_ankle') || this._kp(pose,'right_ankle');
+      if (!H||!K||!A||H.score<C||K.score<C||A.score<C) return;
+      const ang = this._angle(H, K, A);
+      if (ang < 100 && !this.isDown) this.isDown = true;
+      else if (ang > 155 && this.isDown) { this.isDown = false; this._rep(); }
+    }
+    if (this.type === 'pushups') {
+      const SH = this._kp(pose,'left_shoulder') || this._kp(pose,'right_shoulder');
+      const EL = this._kp(pose,'left_elbow')    || this._kp(pose,'right_elbow');
+      const WR = this._kp(pose,'left_wrist')    || this._kp(pose,'right_wrist');
+      if (!SH||!EL||!WR||SH.score<C||EL.score<C||WR.score<C) return;
+      const ang = this._angle(SH, EL, WR);
+      if (ang < 90 && !this.isDown) this.isDown = true;
+      else if (ang > 150 && this.isDown) { this.isDown = false; this._rep(); }
+    }
+  },
+
+  _rep() {
+    this.repCount++;
+    if (this.onRep) this.onRep(this.repCount);
+  },
+
+  _draw(pose) {
+    const vid = document.getElementById('pose-video');
+    const canvas = document.getElementById('pose-canvas');
+    if (!vid || !canvas) return;
+    canvas.width = vid.videoWidth; canvas.height = vid.videoHeight;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const C = 0.3;
+    const links = [
+      ['left_shoulder','right_shoulder'],
+      ['left_shoulder','left_elbow'],['left_elbow','left_wrist'],
+      ['right_shoulder','right_elbow'],['right_elbow','right_wrist'],
+      ['left_shoulder','left_hip'],['right_shoulder','right_hip'],
+      ['left_hip','right_hip'],
+      ['left_hip','left_knee'],['left_knee','left_ankle'],
+      ['right_hip','right_knee'],['right_knee','right_ankle'],
+    ];
+    ctx.strokeStyle = 'rgba(0,255,136,0.85)'; ctx.lineWidth = 3;
+    links.forEach(([a,b]) => {
+      const kA = this._kp(pose,a), kB = this._kp(pose,b);
+      if (kA&&kB&&kA.score>C&&kB.score>C) {
+        ctx.beginPath(); ctx.moveTo(kA.x,kA.y); ctx.lineTo(kB.x,kB.y); ctx.stroke();
+      }
+    });
+    pose.keypoints.forEach(k => {
+      if (k.score > C) {
+        ctx.beginPath(); ctx.arc(k.x,k.y,5,0,2*Math.PI);
+        ctx.fillStyle = '#00ff88'; ctx.fill();
+      }
+    });
+  },
+
+  stop() {
+    if (this.animId) cancelAnimationFrame(this.animId);
+    if (this.stream) { this.stream.getTracks().forEach(t => t.stop()); this.stream = null; }
+    const vid = document.getElementById('pose-video');
+    if (vid) vid.srcObject = null;
+    this.detector = null; this.animId = null;
+  },
+};
+
+// ────────────────────────────────────────────────
+// THEME TOGGLE
+// ────────────────────────────────────────────────
+const Theme = {
+  init() {
+    const saved = localStorage.getItem('fitalarm-theme') || 'dark';
+    this.apply(saved);
+  },
+  apply(mode) {
+    const btn = document.getElementById('theme-toggle');
+    if (mode === 'light') {
+      document.documentElement.classList.add('light');
+      btn.textContent = '🌙 Dark';
+      localStorage.setItem('fitalarm-theme', 'light');
+    } else {
+      document.documentElement.classList.remove('light');
+      btn.textContent = '☀️ Light';
+      localStorage.setItem('fitalarm-theme', 'dark');
+    }
+  },
+  toggle() {
+    const isLight = document.documentElement.classList.contains('light');
+    this.apply(isLight ? 'dark' : 'light');
+  },
+};
+
+document.getElementById('theme-toggle').addEventListener('click', () => Theme.toggle());
+
+// ────────────────────────────────────────────────
+// BOOT
+// ────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  Theme.init();
+  Storage.load();
+
+  // Restore form from saved config
+  document.querySelectorAll('.activity-btn').forEach(b => {
+    b.classList.toggle('selected', b.dataset.activity === S.activityType);
+  });
+  document.getElementById('target-input').value = S.targetValue;
+  document.getElementById('alarm-time-input').value = S.alarmTime;
+  updateTargetLabel();
+
+  // If alarm time is set and in the future, jump to standby
+  const meta = ACTIVITY_META[S.activityType];
+  const now = new Date();
+  const [h, m] = S.alarmTime.split(':').map(Number);
+  const alarmDate = new Date(now);
+  alarmDate.setHours(h, m, 0, 0);
+  if (alarmDate <= now) alarmDate.setDate(alarmDate.getDate() + 1);
+
+  // Only auto-restore standby if within 12 hours
+  if (localStorage.getItem('fitalarm') && (alarmDate - now) < 12 * 3600 * 1000) {
+    document.getElementById('standby-alarm-time').textContent = S.alarmTime;
+    document.getElementById('standby-icon').textContent = meta.icon;
+    document.getElementById('standby-goal-text').textContent =
+      S.activityType === 'gym'
+        ? `${S.targetValue} min ${meta.label}`
+        : `${S.targetValue.toFixed(1)} ${meta.unit} ${meta.label}`;
+    navigateTo('standby');
+    Scheduler.start();
+  }
+});
+</script>
+</body>
+</html>
