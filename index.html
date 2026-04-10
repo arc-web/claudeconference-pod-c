@@ -7,6 +7,8 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="theme-color" content="#0a0a0f" />
   <title>FitAlarm</title>
+  <!-- Pose detection — loaded lazily when camera activities are selected -->
+  <script id="tf-script" data-src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core@4.2.0/dist/tf-core.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -548,6 +550,7 @@
     <div class="screen-header">
       <span class="logo-icon">⚡</span>
       <span class="screen-title">FitAlarm</span>
+      <button id="btn-open-history" style="margin-left:auto;background:var(--surface);border:1.5px solid var(--border);border-radius:99px;padding:6px 12px;font-size:13px;font-weight:600;color:var(--text-muted);cursor:pointer;">📋 History</button>
       <button id="theme-toggle">🌙 Dark</button>
     </div>
 
@@ -567,6 +570,12 @@
           </button>
           <button class="activity-btn" data-activity="gym">
             <span class="icon">🏋️</span>Gym
+          </button>
+          <button class="activity-btn" data-activity="squats">
+            <span class="icon">🦵</span>Squats 📷
+          </button>
+          <button class="activity-btn" data-activity="pushups">
+            <span class="icon">💪</span>Push-Ups 📷
           </button>
         </div>
       </div>
@@ -718,10 +727,64 @@
       max-width:320px;
       text-align:center;
     "></div>
-    <button class="btn btn-primary" id="btn-new-alarm" style="max-width:320px;">⚡ Set New Alarm</button>
+    <div style="display:flex;flex-direction:column;gap:10px;width:100%;max-width:320px;">
+      <button class="btn btn-primary" id="btn-new-alarm">⚡ Set New Alarm</button>
+      <button class="btn btn-outline btn-sm" id="btn-complete-history">📋 View History</button>
+    </div>
   </div>
 
 </div>
+
+  <!-- ══════════════ CAMERA SCREEN ══════════════ -->
+  <div class="screen" id="screen-camera">
+    <div class="screen-header">
+      <span class="logo-icon" id="camera-icon">🦵</span>
+      <span class="screen-title" id="camera-title">Squats</span>
+      <div class="spacer"></div>
+      <div class="sound-indicator" id="camera-sound-indicator">
+        <div class="sound-dot"></div><span>Alarm Active</span>
+      </div>
+    </div>
+
+    <div style="position:relative;width:100%;aspect-ratio:4/3;border-radius:var(--radius);overflow:hidden;background:#000;flex-shrink:0;">
+      <video id="pose-video" autoplay playsinline muted style="width:100%;height:100%;object-fit:cover;transform:scaleX(-1);"></video>
+      <canvas id="pose-canvas" style="position:absolute;inset:0;width:100%;height:100%;transform:scaleX(-1);"></canvas>
+      <div id="pose-status" style="position:absolute;bottom:10px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.75);border-radius:99px;padding:6px 14px;font-size:12px;color:#fff;font-weight:600;white-space:nowrap;">⏳ Loading pose model...</div>
+    </div>
+
+    <div style="text-align:center;padding:12px 0 4px;">
+      <span style="font-size:56px;font-weight:800;color:var(--text);font-variant-numeric:tabular-nums;" id="camera-rep-count">0</span>
+      <span style="font-size:20px;color:var(--text-muted);font-weight:600;"> / <span id="camera-rep-target">10</span></span>
+      <div style="font-size:12px;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-top:2px;">Reps</div>
+    </div>
+
+    <div class="stats-row">
+      <div class="stat-card">
+        <div class="stat-value" id="camera-elapsed">00:00</div>
+        <div class="stat-label">Elapsed</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="camera-pace">—</div>
+        <div class="stat-label">reps/min</div>
+      </div>
+    </div>
+
+    <div class="bottom-actions">
+      <button class="btn btn-warn btn-sm" id="btn-pause-sound-camera">🔇 Pause Alarm Sound</button>
+      <button class="btn btn-primary" id="btn-camera-complete">✅ Mark Complete</button>
+    </div>
+  </div>
+
+  <!-- ══════════════ HISTORY SCREEN ══════════════ -->
+  <div class="screen" id="screen-history">
+    <div class="screen-header">
+      <span class="logo-icon">📋</span>
+      <span class="screen-title">History</span>
+      <div class="spacer"></div>
+      <button id="btn-close-history" style="background:var(--surface);border:1.5px solid var(--border);border-radius:99px;padding:6px 14px;font-size:13px;font-weight:600;color:var(--text-muted);cursor:pointer;">✕ Close</button>
+    </div>
+    <div id="history-list" style="flex:1;overflow-y:auto;padding-bottom:20px;"></div>
+  </div>
 
 <!-- ══════════════ END CONFIRMATION MODAL ══════════════ -->
 <div id="end-modal-overlay">
@@ -750,10 +813,12 @@ const GPS_MIN_DISTANCE_M = 5;           // ignore GPS jumps < 5m
 const GPS_MAX_ACCURACY_M = 40;          // ignore positions with accuracy > 40m
 
 const ACTIVITY_META = {
-  run:     { icon: '🏃', label: 'Run',     activeLabel: 'Running',     unit: 'km',  paceLabel: 'min/km' },
-  walk:    { icon: '🚶', label: 'Walk',    activeLabel: 'Walking',     unit: 'km',  paceLabel: 'min/km' },
-  cycling: { icon: '🚴', label: 'Cycling', activeLabel: 'Cycling',     unit: 'km',  paceLabel: 'km/h'   },
-  gym:     { icon: '🏋️', label: 'Gym',    activeLabel: 'Gym Session', unit: 'min', paceLabel: 'Remaining' },
+  run:     { icon: '🏃', label: 'Run',      activeLabel: 'Running',     unit: 'km',   paceLabel: 'min/km'   },
+  walk:    { icon: '🚶', label: 'Walk',     activeLabel: 'Walking',     unit: 'km',   paceLabel: 'min/km'   },
+  cycling: { icon: '🚴', label: 'Cycling',  activeLabel: 'Cycling',     unit: 'km',   paceLabel: 'km/h'     },
+  gym:     { icon: '🏋️', label: 'Gym',     activeLabel: 'Gym Session', unit: 'min',  paceLabel: 'Remaining'},
+  squats:  { icon: '🦵', label: 'Squats',   activeLabel: 'Squats',      unit: 'reps', paceLabel: 'reps/min', camera: true },
+  pushups: { icon: '💪', label: 'Push-Ups', activeLabel: 'Push-Ups',    unit: 'reps', paceLabel: 'reps/min', camera: true },
 };
 
 // ────────────────────────────────────────────────
@@ -775,6 +840,7 @@ const S = {
   elapsedInterval: null,
   gymInterval: null,
   gymSecondsLeft: 0,
+  cameraElapsedInterval: null,
   inactivityCheckInterval: null,
   lastMotionTime: Date.now(),
   motionGranted: false,
@@ -1245,9 +1311,44 @@ function triggerAlarm() {
   });
 }
 
+async function startCameraActivity() {
+  const meta = ACTIVITY_META[S.activityType];
+  document.getElementById('camera-icon').textContent   = meta.icon;
+  document.getElementById('camera-title').textContent  = meta.activeLabel;
+  document.getElementById('camera-rep-target').textContent = S.targetValue;
+  document.getElementById('camera-rep-count').textContent  = '0';
+  document.getElementById('camera-elapsed').textContent    = '00:00';
+  document.getElementById('camera-pace').textContent       = '—';
+  const si = document.getElementById('camera-sound-indicator');
+  si.classList.remove('paused');
+  si.innerHTML = '<div class="sound-dot"></div><span>Alarm Active</span>';
+
+  navigateTo('camera');
+  requestWakeLock();
+  S.activityStartTime = Date.now();
+
+  // Elapsed timer for camera screen
+  clearInterval(S.cameraElapsedInterval);
+  S.cameraElapsedInterval = setInterval(() => {
+    const secs = Math.floor((Date.now() - S.activityStartTime) / 1000);
+    const mm = String(Math.floor(secs/60)).padStart(2,'0');
+    const ss = String(secs%60).padStart(2,'0');
+    document.getElementById('camera-elapsed').textContent = `${mm}:${ss}`;
+    const rpm = secs > 0 ? (PoseTracker.repCount / (secs/60)).toFixed(1) : '—';
+    document.getElementById('camera-pace').textContent = rpm;
+  }, 1000);
+
+  await PoseTracker.start(S.activityType, (reps) => {
+    document.getElementById('camera-rep-count').textContent = reps;
+    if (reps >= S.targetValue) completeActivity(false);
+  });
+}
+
 function startActivity() {
   S.alarmSoundPaused = false;
   const meta = ACTIVITY_META[S.activityType];
+
+  if (meta.camera) { startCameraActivity(); return; }
 
   document.getElementById('active-icon').textContent = meta.icon;
   document.getElementById('active-title').textContent = meta.activeLabel;
@@ -1280,24 +1381,58 @@ function startActivity() {
   }
 }
 
-function completeActivity() {
+function completeActivity(earlyEnd = false) {
   Audio.stop();
   GPS.stop();
   Motion.stop();
+  PoseTracker.stop();
   releaseWakeLock();
   clearInterval(S.elapsedInterval);
   clearInterval(S.gymInterval);
+  clearInterval(S.cameraElapsedInterval);
 
   const elapsed = S.activityStartTime ? Date.now() - S.activityStartTime : 0;
   const elapsedSec = Math.floor(elapsed / 1000);
   const meta = ACTIVITY_META[S.activityType];
+
+  // Save history record
+  let actual, unit;
+  const isCam = meta.camera;
+  if (isCam) {
+    actual = String(PoseTracker.repCount); unit = 'reps';
+  } else if (S.activityType === 'gym') {
+    actual = String(S.targetValue); unit = 'min';
+  } else {
+    actual = (S.currentDistance > 0 ? S.currentDistance : (earlyEnd ? S.currentDistance : S.targetValue)).toFixed(2);
+    unit = 'km';
+  }
+  History.save({
+    timestamp: Date.now(),
+    activityType: S.activityType,
+    icon: meta.icon,
+    label: meta.label,
+    goal: `${S.targetValue} ${meta.unit}`,
+    actual,
+    unit,
+    elapsed: formatTime(elapsed),
+    status: earlyEnd ? 'early' : 'completed',
+  });
 
   document.getElementById('complete-title').textContent = 'Goal Complete!';
   document.getElementById('complete-time').textContent = formatTime(elapsed);
 
   const paceWrap = document.getElementById('complete-pace-wrap');
 
-  if (S.activityType === 'gym') {
+  if (isCam) {
+    document.getElementById('complete-emoji').textContent = meta.icon;
+    document.getElementById('complete-distance').textContent = PoseTracker.repCount;
+    document.getElementById('complete-dist-label').textContent = 'reps';
+    document.getElementById('complete-sub').textContent = `${PoseTracker.repCount} ${meta.label} done!`;
+    document.getElementById('complete-badge').textContent = earlyEnd
+      ? '⚡ Good effort — every rep counts!'
+      : `🎯 ${S.targetValue} ${meta.label} complete. Let's go!`;
+    paceWrap.style.display = 'none';
+  } else if (S.activityType === 'gym') {
     document.getElementById('complete-emoji').textContent = '🏋️';
     document.getElementById('complete-distance').textContent = S.targetValue;
     document.getElementById('complete-dist-label').textContent = 'min';
@@ -1342,10 +1477,12 @@ function resetToSetup() {
   Audio.stop();
   GPS.stop();
   Motion.stop();
+  PoseTracker.stop();
   Scheduler.stop();
   releaseWakeLock();
   clearInterval(S.elapsedInterval);
   clearInterval(S.gymInterval);
+  clearInterval(S.cameraElapsedInterval);
   S.currentDistance = 0;
   S.lastPosition = null;
   S.activityStartTime = null;
@@ -1363,11 +1500,15 @@ function resetToSetup() {
 }
 
 function updateTargetLabel() {
-  const isGym = S.activityType === 'gym';
+  const t = S.activityType;
+  const isGym    = t === 'gym';
+  const isCamera = t === 'squats' || t === 'pushups';
   document.getElementById('target-label').textContent =
-    isGym ? 'Duration Goal (minutes)' : 'Distance Goal (km)';
-  document.getElementById('target-input').placeholder = isGym ? '30' : '5';
-  document.getElementById('target-input').step = isGym ? '1' : '0.1';
+    isGym ? 'Duration Goal (minutes)' : isCamera ? 'Rep Goal' : 'Distance Goal (km)';
+  document.getElementById('target-input').placeholder = isGym ? '30' : isCamera ? '20' : '5';
+  document.getElementById('target-input').step = (isGym || isCamera) ? '1' : '0.1';
+  document.getElementById('target-input').value =
+    isGym ? '30' : isCamera ? '20' : '5';
 }
 
 // ────────────────────────────────────────────────
@@ -1495,7 +1636,7 @@ const EndConfirm = {
     this.step++;
     if (this.step >= this.steps.length) {
       this.close();
-      completeActivity();
+      completeActivity(true);
     } else {
       this._render();
     }
@@ -1524,6 +1665,43 @@ document.getElementById('btn-new-alarm').addEventListener('click', () => {
   resetToSetup();
 });
 
+// History navigation
+document.getElementById('btn-open-history').addEventListener('click', () => {
+  renderHistoryScreen();
+  navigateTo('history');
+});
+document.getElementById('btn-complete-history').addEventListener('click', () => {
+  renderHistoryScreen();
+  navigateTo('history');
+});
+document.getElementById('btn-close-history').addEventListener('click', () => {
+  navigateTo('setup');
+});
+
+// Camera screen — Pause/Resume Sound
+document.getElementById('btn-pause-sound-camera').addEventListener('click', async () => {
+  await Audio.resume();
+  const si = document.getElementById('camera-sound-indicator');
+  if (Audio.isMuted) {
+    Audio.resumeSound();
+    si.classList.remove('paused');
+    si.innerHTML = '<div class="sound-dot"></div><span>Alarm Active</span>';
+    document.getElementById('btn-pause-sound-camera').textContent = '🔇 Pause Alarm Sound';
+    showToast('Alarm sound resumed');
+  } else {
+    Audio.pauseSound();
+    si.classList.add('paused');
+    si.innerHTML = '<div class="sound-dot"></div><span>Sound Paused</span>';
+    document.getElementById('btn-pause-sound-camera').textContent = '🔔 Resume Sound';
+    showToast('Sound paused — keep moving!');
+  }
+});
+
+// Camera screen — Mark Complete (goes through 3-step confirm)
+document.getElementById('btn-camera-complete').addEventListener('click', () => {
+  EndConfirm.open();
+});
+
 // Page visibility: resume alarm if hidden and sound was paused
 document.addEventListener('visibilitychange', () => {
   if (document.hidden && Audio.isMuted && Audio.isRunning) {
@@ -1539,6 +1717,233 @@ document.addEventListener('visibilitychange', async () => {
     await requestWakeLock();
   }
 });
+
+// ────────────────────────────────────────────────
+// HISTORY
+// ────────────────────────────────────────────────
+const History = {
+  _key: 'fitalarm-history',
+  load()  { try { return JSON.parse(localStorage.getItem(this._key) || '[]'); } catch(_) { return []; } },
+  save(r) {
+    const all = this.load();
+    all.unshift(r);
+    if (all.length > 100) all.splice(100);
+    try { localStorage.setItem(this._key, JSON.stringify(all)); } catch(_) {}
+  },
+};
+
+function renderHistoryScreen() {
+  const records = History.load();
+  const list = document.getElementById('history-list');
+  if (!records.length) {
+    list.innerHTML = `<div style="text-align:center;padding:60px 20px;color:var(--text-muted);">
+      <div style="font-size:48px;margin-bottom:16px;">📋</div>
+      <div style="font-size:16px;font-weight:600;">No workouts yet</div>
+      <div style="font-size:13px;margin-top:8px;">Complete an activity to see it here</div>
+    </div>`;
+    return;
+  }
+  list.innerHTML = records.map(r => {
+    const d = new Date(r.timestamp);
+    const dateStr = d.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+    const timeStr = d.toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit' });
+    const isCompleted = r.status === 'completed';
+    const statusColor = isCompleted ? 'var(--accent)' : 'var(--warn)';
+    const statusBg    = isCompleted ? 'rgba(0,255,136,0.08)' : 'rgba(255,170,0,0.08)';
+    const statusLabel = isCompleted ? '✅ Completed' : '⚡ Ended Early';
+    return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:10px;">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+        <span style="font-size:28px;">${r.icon}</span>
+        <div style="flex:1;">
+          <div style="font-weight:700;font-size:15px;color:var(--text);">${r.label}</div>
+          <div style="font-size:12px;color:var(--text-muted);">${dateStr} · ${timeStr}</div>
+        </div>
+        <div style="font-size:12px;font-weight:700;color:${statusColor};background:${statusBg};border:1px solid ${statusColor};border-radius:99px;padding:4px 10px;">${statusLabel}</div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">
+        <div style="text-align:center;background:var(--bg);border-radius:8px;padding:8px;">
+          <div style="font-size:16px;font-weight:700;color:var(--text);">${r.actual}</div>
+          <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;">${r.unit}</div>
+        </div>
+        <div style="text-align:center;background:var(--bg);border-radius:8px;padding:8px;">
+          <div style="font-size:16px;font-weight:700;color:var(--text);">${r.elapsed}</div>
+          <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;">Time</div>
+        </div>
+        <div style="text-align:center;background:var(--bg);border-radius:8px;padding:8px;">
+          <div style="font-size:16px;font-weight:700;color:var(--text-muted);">${r.goal}</div>
+          <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;">Goal</div>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ────────────────────────────────────────────────
+// POSE TRACKER (squats & push-ups)
+// ────────────────────────────────────────────────
+const PoseTracker = {
+  detector: null,
+  stream:   null,
+  animId:   null,
+  repCount: 0,
+  isDown:   false,
+  onRep:    null,
+  type:     null,
+
+  async load() {
+    if (window.poseDetection) return true;
+    // Lazily load TF.js + pose-detection from CDN
+    const scripts = [
+      'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core@4.2.0/dist/tf-core.min.js',
+      'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl@4.2.0/dist/tf-backend-webgl.min.js',
+      'https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@2.1.0/dist/pose-detection.min.js',
+    ];
+    for (const src of scripts) {
+      await new Promise((res, rej) => {
+        const s = document.createElement('script');
+        s.src = src; s.crossOrigin = 'anonymous';
+        s.onload = res; s.onerror = rej;
+        document.head.appendChild(s);
+      });
+    }
+    return !!window.poseDetection;
+  },
+
+  async start(type, onRep) {
+    this.type = type; this.onRep = onRep;
+    this.repCount = 0; this.isDown = false;
+    const statusEl = document.getElementById('pose-status');
+    const set = (msg) => { if (statusEl) { statusEl.style.display = 'block'; statusEl.textContent = msg; } };
+
+    // Camera
+    try {
+      this.stream = await navigator.mediaDevices.getUserMedia(
+        { video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } } }
+      );
+      const vid = document.getElementById('pose-video');
+      vid.srcObject = this.stream;
+      await new Promise(r => { vid.onloadedmetadata = r; });
+      await vid.play();
+    } catch(e) {
+      set('❌ Camera permission denied');
+      return false;
+    }
+
+    // Load model
+    set('⏳ Loading pose model (first time is slow)...');
+    try {
+      await this.load();
+      await window.tf.setBackend('webgl');
+      this.detector = await window.poseDetection.createDetector(
+        window.poseDetection.SupportedModels.MoveNet,
+        { modelType: window.poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING }
+      );
+      set('✅ Ready! Get in position...');
+      setTimeout(() => { if (statusEl) statusEl.style.display = 'none'; }, 2500);
+    } catch(e) {
+      set('⚠️ Pose model failed to load — count manually and tap Complete');
+      return false;
+    }
+
+    this._loop();
+    return true;
+  },
+
+  _loop() {
+    this.animId = requestAnimationFrame(async () => {
+      if (!this.stream) return;
+      await this._detect();
+      this._loop();
+    });
+  },
+
+  async _detect() {
+    if (!this.detector) return;
+    const vid = document.getElementById('pose-video');
+    if (!vid || vid.readyState < 2) return;
+    try {
+      const poses = await this.detector.estimatePoses(vid);
+      if (poses[0]) { this._draw(poses[0]); this._count(poses[0]); }
+    } catch(_) {}
+  },
+
+  _angle(a, b, c) {
+    const ab = { x: a.x - b.x, y: a.y - b.y };
+    const cb = { x: c.x - b.x, y: c.y - b.y };
+    const dot = ab.x*cb.x + ab.y*cb.y;
+    const mag = Math.hypot(ab.x, ab.y) * Math.hypot(cb.x, cb.y);
+    return mag ? Math.acos(Math.max(-1, Math.min(1, dot/mag))) * (180/Math.PI) : 0;
+  },
+
+  _kp(pose, name) { return pose.keypoints.find(k => k.name === name); },
+
+  _count(pose) {
+    const C = 0.3; // min confidence
+    if (this.type === 'squats') {
+      const H = this._kp(pose,'left_hip')   || this._kp(pose,'right_hip');
+      const K = this._kp(pose,'left_knee')  || this._kp(pose,'right_knee');
+      const A = this._kp(pose,'left_ankle') || this._kp(pose,'right_ankle');
+      if (!H||!K||!A||H.score<C||K.score<C||A.score<C) return;
+      const ang = this._angle(H, K, A);
+      if (ang < 100 && !this.isDown) this.isDown = true;
+      else if (ang > 155 && this.isDown) { this.isDown = false; this._rep(); }
+    }
+    if (this.type === 'pushups') {
+      const SH = this._kp(pose,'left_shoulder') || this._kp(pose,'right_shoulder');
+      const EL = this._kp(pose,'left_elbow')    || this._kp(pose,'right_elbow');
+      const WR = this._kp(pose,'left_wrist')    || this._kp(pose,'right_wrist');
+      if (!SH||!EL||!WR||SH.score<C||EL.score<C||WR.score<C) return;
+      const ang = this._angle(SH, EL, WR);
+      if (ang < 90 && !this.isDown) this.isDown = true;
+      else if (ang > 150 && this.isDown) { this.isDown = false; this._rep(); }
+    }
+  },
+
+  _rep() {
+    this.repCount++;
+    if (this.onRep) this.onRep(this.repCount);
+  },
+
+  _draw(pose) {
+    const vid = document.getElementById('pose-video');
+    const canvas = document.getElementById('pose-canvas');
+    if (!vid || !canvas) return;
+    canvas.width = vid.videoWidth; canvas.height = vid.videoHeight;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const C = 0.3;
+    const links = [
+      ['left_shoulder','right_shoulder'],
+      ['left_shoulder','left_elbow'],['left_elbow','left_wrist'],
+      ['right_shoulder','right_elbow'],['right_elbow','right_wrist'],
+      ['left_shoulder','left_hip'],['right_shoulder','right_hip'],
+      ['left_hip','right_hip'],
+      ['left_hip','left_knee'],['left_knee','left_ankle'],
+      ['right_hip','right_knee'],['right_knee','right_ankle'],
+    ];
+    ctx.strokeStyle = 'rgba(0,255,136,0.85)'; ctx.lineWidth = 3;
+    links.forEach(([a,b]) => {
+      const kA = this._kp(pose,a), kB = this._kp(pose,b);
+      if (kA&&kB&&kA.score>C&&kB.score>C) {
+        ctx.beginPath(); ctx.moveTo(kA.x,kA.y); ctx.lineTo(kB.x,kB.y); ctx.stroke();
+      }
+    });
+    pose.keypoints.forEach(k => {
+      if (k.score > C) {
+        ctx.beginPath(); ctx.arc(k.x,k.y,5,0,2*Math.PI);
+        ctx.fillStyle = '#00ff88'; ctx.fill();
+      }
+    });
+  },
+
+  stop() {
+    if (this.animId) cancelAnimationFrame(this.animId);
+    if (this.stream) { this.stream.getTracks().forEach(t => t.stop()); this.stream = null; }
+    const vid = document.getElementById('pose-video');
+    if (vid) vid.srcObject = null;
+    this.detector = null; this.animId = null;
+  },
+};
 
 // ────────────────────────────────────────────────
 // THEME TOGGLE
